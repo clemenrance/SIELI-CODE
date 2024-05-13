@@ -1,0 +1,157 @@
+----------------Setup Elasticsearch server ---------------------
+
+1  apt-get update
+    2  sudo apt-get install openjdk-8-jdk
+    3  wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+    4  sudo apt-get install apt-transport-https
+    5  echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | sudo tee –a /etc/apt/sources.list.d/elastic-7.x.list
+    6  sudo apt-get update
+    7  sudo apt-get install elasticsearch
+Open the Elasticsearch configuration file
+    8  sudo vim /etc/elasticsearch/elasticsearch.yml
+
+replace the IP below and uncomment the two lines
+==============================================
+  network.host: <90.50.24.20>   #private IP of elasticsearch server
+  http.port: 9200
+insert the text below just untop of discovery
+============================================
+  discovery.type: single-node
+
+   9 systemctl start elasticsearch.service   ------>restarting elasticsearch
+  10  curl http://172.31.31.33:9200          ------>Testing if elasticsearch is available
+
+
+----------------------Setup Kibana server---------------------------------------
+
+1  apt-get update
+    2  sudo apt-get install openjdk-8-jdk
+    3  wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+    4  sudo apt-get install apt-transport-https
+    5  echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | sudo tee –a /etc/apt/sources.list.d/elastic-7.x.list
+    6  sudo apt-get update
+    7  sudo apt-get install kibana
+
+Open the Kibana configuration file below
+    8  sudo vim /etc/kibana/kibana.yml
+
+change the below configuration
+===========================
+  server.port: 5601
+  server.host: "172.31.81.247"  #private ip of kibana server
+
+  elasticsearch.hosts: ["http://172.31.91.221:9200"] -----> if the elasticsearch is in a different server, giver the server IP
+    9  systemctl start kibana
+
+   10  sudo systemctl status kibana
+   11  tail -f /var/log/kibana/kibana.log
+
+Accessing Kiban---- >  172.31.31.33:5601    -------> put the public IP of the Kibana server with its port 5601
+
+
+---------------------Setup Logstash in the server-----------------------------------------------------
+======================================================================================================
+
+logstash pipeline samples : https://www.elastic.co/guide/en/logstash/7.0/config-examples.html
+
+   12  sudo apt-get install logstash
+
+Navigate to the below directory and create a file named apache.conf
+   13  cd /etc/logstash/conf.d/
+   14  vim apache.conf
+
+input {
+    beats {
+        port => "5044"
+    }
+}
+filter {
+    grok {
+        match => { "message" => "%{COMBINEDAPACHELOG}" }
+    }
+}
+output {
+    elasticsearch {
+        hosts => ["change-this-IP:9200"]
+        index => "%{[@metadata][beat]}-%{[@metadata][version]}-%{+YYYY.MM.dd}"
+    }
+    stdout {
+        codec => rubydebug
+      }
+}
+
+    systemctl start logstash
+    systemctl status logstash
+    
+tail -f /var/log/logstash/logstash-plain.log    -------> This is to see the logs of logstash
+ 
+=============================================================================================   
+                          In the Apache server,
+=============================================================================================
+ - sudo apt update
+ - apt-get install apache2
+
+Deploying the website
+=====================
+1) cd /var/www/html/
+2) rm -r index.html
+2) git clone https://github.com/clemenrance/LAW-APP.git
+
+ Acces the website at <your-public-ip/LAW-APP
+
+------------------------------Installing Filebeats on the appserver----------------------------------------------
+=================================================================================================================
+   
+       curl -L -O https://artifacts.elastic.co/downloads/beats/filebeat/filebeat-7.17.6-amd64.deb
+       dpkg -i filebeat-7.17.6-amd64.deb
+ 
+#open the file below, and go down to "paths that should be crawled and fetched, paste the location /var/log/apache2/access.log
+on the paths configuration of the file beats. Thats where file beats will be collecting the data
+       
+ Open this location----->     vim /etc/filebeat/filebeat.yml
+ Paste this directory----->   /var/log/apache2/access.log
+                              /var/log/apache2/*.log
+
+Still in the file, Comment out the elasticsearch output under output.elasticsearch
+       #output.elasticsearch:                               ------------------------------------> make sure you comment this line
+         # Array of hosts to connect to.
+         #hosts: ["localhost:9200"]                         ------------------------------------> make sure you comment this line
+
+Enable KIBANA OUTPUT
+====================
+
+# =================================== Kibana output ===================================
+
+# Starting with Beats version 6.0.0, the dashboards are loaded via the Kibana API.
+# This requires a Kibana endpoint configuration.
+setup.kibana:                   ----------------------------------------------------------------------> uncomment this line
+
+  # Kibana Host
+  # Scheme and port can be left out and will be set to the default (http and 5601)
+  # In case you specify and additional path, the scheme is required: http://localhost:5601/path
+  # IPv6 addresses should always be defined as: https://[2001:db8::1]:5601
+  host: "172.31.81.247:5601"    -----------------------------------------------------------------------> uncomment this line
+
+  # Kibana Space ID
+  # ID of the Kibana Space into which the dashboards should be loaded. By default,
+  # the Default Space will be used.
+  #space.id:
+
+
+
+Enable the logstash output
+# ------------------------------ Logstash Output -------------------------------
+output.logstash:                -----------------------------------------------------------------------> uncomment this line
+  # The Logstash hosts
+  hosts: ["172.31.81.247:5044"] ------> Put the Logstash IP   -----------------------------------------> uncomment this line
+
+
+Setting up Index Manager for filebeat in the app server
+=======================================================
+   1  sudo filebeat setup --index-management -E output.logstash.enabled=false -E 'output.elasticsearch.hosts=["172.31.31.33:9200"]'
+   2  sudo filebeat modules enable system
+   3  sudo filebeat modules enable apache
+   4  service filebeat restart
+   5  filebeat test output
+
+
